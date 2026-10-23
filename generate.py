@@ -128,8 +128,19 @@ def parse_nhl(src, now):
             start = dt.datetime.fromisoformat(g["startTimeUTC"].replace("Z", "+00:00")).astimezone(PRAGUE)
             if start >= now and start.date() <= last:
                 result.append(dict(date=start.date(), time=f"{start:%H:%M}", home=name(g["homeTeam"]), away=name(g["awayTeam"]),
-                                   side=None, note=g.get("venue", {}).get("default", "")))
+                                   home_abbr=g["homeTeam"].get("abbrev", ""), away_abbr=g["awayTeam"].get("abbrev", ""),
+                                   side=None, note=""))
     return sorted(result, key=lambda m: (m["date"], m["time"]))
+
+LOGO_DIR = "logos/nhl"  # filled by update_logos.py
+
+def logo_html(abbr):
+    """The team logo in both colour variants (CSS shows the one that fits the theme), or "" when we have no logo for the team."""
+    variants = ("light", "dark")
+    if not re.fullmatch(r"[A-Z]{2,4}", abbr or "") or not all(os.path.exists(f"{LOGO_DIR}/{abbr}_{v}.svg") for v in variants):
+        return ""
+    return "".join(f'<img class="logo logo-{v}" src="{LOGO_DIR}/{abbr}_{v}.svg" width=42 height=28 alt="" loading=lazy decoding=async>'
+                   for v in variants)
 
 def fetch_nhl(now):
     return parse_nhl(fetch(NHL_URL, "utf-8"), now)
@@ -204,6 +215,10 @@ li span small{display:block;color:var(--mut)}
 .chip.doma{background:var(--red);border-color:var(--red);color:#fff}
 .btn{font:inherit;font-weight:600;cursor:pointer}
 body:not(.all-matches) .later{display:none}
+.logo{width:42px;height:28px;object-fit:contain;flex:none}.logo-dark{display:none}
+:root[data-theme=dark] .logo-light{display:none}:root[data-theme=dark] .logo-dark{display:inline}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]) .logo-light{display:none}:root:not([data-theme=light]) .logo-dark{display:inline}}
+li.logos>span{display:flex;flex-direction:column;gap:6px}.logos .team{display:flex;align-items:center;gap:10px;white-space:normal}
 """
 
 JS = """
@@ -265,11 +280,16 @@ def match_cards(matches):
     for date, items in by_date.items():
         rows = []
         for n, m in items:
-            teams = " - ".join(f'<span class=team>{esc(t) if m["side"] is None or t == m["opponent"] else f"<strong>{esc(t)}</strong>"}</span>'
-                               for t in (m["home"], m["away"]))
+            has_logos = "home_abbr" in m  # the NHL rows: a logo and a name per team, one under the other
+            if has_logos:
+                teams = "".join(f'<span class=team>{logo_html(abbr)}{esc(t)}</span>' for t, abbr in ((m["home"], m["home_abbr"]), (m["away"], m["away_abbr"])))
+            else:
+                teams = " - ".join(f'<span class=team>{esc(t) if m["side"] is None or t == m["opponent"] else f"<strong>{esc(t)}</strong>"}</span>'
+                                   for t in (m["home"], m["away"]))
             chip = f'<em class="chip {m["side"]}">{"Doma" if m["side"] == "doma" else "Venku"}</em>' if m["side"] else ""
             note = "<small>" + esc(m["note"]) + "</small>" if m["note"] else ""
-            rows.append(f'<li class="{"later" if n >= SHOWN_MATCHES else ""}"><time>{m["time"]}</time>'
+            classes = " ".join(c for c, on in (("later", n >= SHOWN_MATCHES), ("logos", has_logos)) if on)
+            rows.append(f'<li class="{classes}"><time>{m["time"]}</time>'
                         f'<span>{teams}{note}</span>{chip}</li>')
         heading = f"{WEEKDAYS[date.weekday()]} {date.day}. {date.month}."
         cards.append(f'<section class="day{" later" if items[0][0] >= SHOWN_MATCHES else ""}" data-date="{date.isoformat()}">'
@@ -295,6 +315,9 @@ def render_matches(matches):
                              matches_url(dt.datetime.now(PRAGUE)), "Celý rozpis zápasů", "Žádné nadcházející zápasy.")
 
 def render_nhl(matches):
+    no_logo = sorted({abbr for m in matches or [] for abbr in (m["home_abbr"], m["away_abbr"]) if abbr and not logo_html(abbr)})
+    if no_logo:
+        print(f"::warning::no logo for {', '.join(no_logo)}, run update_logos.py")
     return render_match_page("nhl", "Zápasy NHL", "NHL - zápasy", matches, "https://www.nhl.com/schedule",
                              "Celý rozpis NHL", "V nejbližších dnech nejsou žádné zápasy NHL.")
 
@@ -337,6 +360,8 @@ def main():
     open("site/calendar.ics", "wb").write(build_ics(days))
     for f in ("logo.png", "apple-touch-icon.png"):
         shutil.copy(f, "site")
+    if os.path.isdir("logos"):
+        shutil.copytree("logos", "site/logos", dirs_exist_ok=True)
 
 if __name__ == "__main__":
     main()

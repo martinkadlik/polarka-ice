@@ -17,6 +17,12 @@ shows a notice and the bookings are still updated. A GitHub Actions workflow
 (`.github/workflows/pages.yml`) runs it every 15 minutes and publishes `site/` with GitHub Pages.
 If the calendar cannot be fetched or its format changes, the run fails and the last good page stays online.
 
+## NHL team logos
+
+`logos/nhl/` holds the light and dark SVG logo of every NHL team, so the page does not load images from other servers.
+`update_logos.py` downloads the missing ones (run it when a team is added or moved; delete a file first to replace it).
+A team without a logo is shown without one and `generate.py` prints a warning.
+
 ## Run it locally
 
 ```bash
@@ -29,6 +35,8 @@ Python 3.9+ with the standard library only. The expected times are in `EXPECTED`
 
 ## Notes
 
+- The NHL team logos belong to the NHL and its teams (trademarks). They only identify the teams on the NHL page and are not
+  covered by any license of this repository.
 - The club logo (`logo.png`, `apple-touch-icon.png`) belongs to HC Frýdek-Místek. It is only a decoration of the page
   and is not covered by any license of this repository.
 - The booking data comes from the Hala Polárka reservation system and the matches from the club website.

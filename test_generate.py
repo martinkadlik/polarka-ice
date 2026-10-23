@@ -108,11 +108,11 @@ assert 'aria-current=page>Rezervace' in G.render_page(days).decode() and "zapasy
 
 # --- NHL page (JSON from api-web.nhle.com, times in UTC)
 import json
-def team(place, name):
-    return {"placeName": {"default": place}, "commonName": {"default": name}}
+def team(place, name, abbrev=""):
+    return {"placeName": {"default": place}, "commonName": {"default": name}, "abbrev": abbrev}
 def game(utc, state="FUT"):
-    return {"startTimeUTC": utc, "gameState": state, "homeTeam": team("Boston", "Bruins"),
-            "awayTeam": team("Toronto", "Maple Leafs"), "venue": {"default": "TD Garden"}}
+    return {"startTimeUTC": utc, "gameState": state, "homeTeam": team("Boston", "Bruins", "BOS"),
+            "awayTeam": team("Toronto", "Maple Leafs", "TOR"), "venue": {"default": "TD Garden"}}
 now = dt.datetime(2026, 10, 23, 20, 50, tzinfo=G.PRAGUE)
 nhl_games = [
     game("2026-10-29T22:00:00Z"),                # 23:00 on the 29th, the last day of the window
@@ -127,7 +127,7 @@ nhl_games = [
 src_nhl = json.dumps({"gameWeek": [{"date": "2026-10-23", "games": nhl_games}]})
 nhl = G.parse_nhl(src_nhl, now)
 assert [(m["date"].day, m["time"]) for m in nhl] == [(24, "02:00"), (26, "00:30"), (26, "01:00"), (29, "23:00")]
-assert (nhl[0]["home"], nhl[0]["away"], nhl[0]["side"], nhl[0]["note"]) == ("Boston Bruins", "Toronto Maple Leafs", None, "TD Garden")
+assert (nhl[0]["home"], nhl[0]["away"], nhl[0]["side"], nhl[0]["note"]) == ("Boston Bruins", "Toronto Maple Leafs", None, "")   # no venue shown
 for bad in ("{}", '{"gameWeek": []}'):
     try:
         G.parse_nhl(bad, now); raise SystemExit("should have failed")
@@ -140,10 +140,29 @@ class NhlReply:
 G.urllib.request.urlopen = lambda request, timeout: requested.append((request.full_url, request.get_header("User-agent"))) or NhlReply()
 assert G.fetch_nhl(now) == nhl and requested == [(G.NHL_URL, G.USER_AGENT)]   # sends our own User-Agent
 page = G.render_nhl(nhl + nhl[:2]).decode()
-assert "Zobrazit vše (6)" in page and "TD Garden" in page and "Boston Bruins" in page and 'data-date="2026-10-24"' in page
+assert "Zobrazit vše (6)" in page and "TD Garden" not in page and "<small>" not in page    # the venue is not shown
+assert "Boston Bruins" in page and 'data-date="2026-10-24"' in page
 assert "<strong>" not in page and 'class="chip' not in page      # no "our team" on this page
 assert all(f'href="{p}"' in page for p in ("index.html", "zapasy.html", "nhl.html")) and "aria-current=page>Zápasy NHL" in page
 assert "nhl.com/schedule" in page and "Poslední aktualizace" in page
 assert "nejsou žádné zápasy NHL" in G.render_nhl([]).decode() and "nepodařilo načíst" in G.render_nhl(None).decode()
 assert all('href="nhl.html"' in p for p in (G.render_page(days).decode(), G.render_matches([]).decode()))
+
+# --- team logos (files in logos/nhl, filled by update_logos.py)
+import glob, os, re
+assert (nhl[0]["home_abbr"], nhl[0]["away_abbr"]) == ("BOS", "TOR")
+page = G.render_nhl(nhl).decode()
+assert 'src="logos/nhl/BOS_light.svg"' in page and 'src="logos/nhl/BOS_dark.svg"' in page and "loading=lazy" in page
+assert page.count('<img class="logo ') == 16          # 4 games x 2 teams x (light + dark)
+assert "Boston Bruins" in page and "Toronto Maple Leafs" in page and 'class="logos"' in page
+assert G.logo_html("XXX") == "" and G.logo_html("") == "" and G.logo_html("../x") == ""     # unknown team or odd value: no logo
+assert '<img class="logo ' not in G.render_nhl([dict(nhl[0], home_abbr="XXX", away_abbr="")]).decode()   # no crash, no broken image
+assert '<img class="logo ' not in G.render_matches(up).decode() + G.render_page(days).decode()           # only the NHL page has logos
+files = sorted(glob.glob("logos/nhl/*.svg"))
+assert len(files) >= 64, len(files)
+for path in files:
+    svg = open(path, encoding="utf-8").read()
+    assert svg.lstrip().startswith("<svg") and not re.search(r'<script|<foreignObject|\son\w+\s*=|href\s*=\s*["\']?https?:', svg, re.I), path
+    other = path.replace("_light.svg", "_dark.svg") if path.endswith("_light.svg") else path.replace("_dark.svg", "_light.svg")
+    assert os.path.exists(other), other                # both colour variants exist for every team
 print("OK")
