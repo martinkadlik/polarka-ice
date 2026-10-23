@@ -33,4 +33,26 @@ try:
     G.select_days([("Sobota", ["Přípravka (07:30-08:30)"])]); raise SystemExit("should have failed")
 except ValueError:
     pass
+# the page script looks these elements up by name, so the HTML must contain them
+for name in ("id=theme", "id=refresh", "id=stale", "data-filter=only", "data-filter=all", 'class="day'):
+    assert name in html, name
+# a short network outage is retried, a long one still fails
+class Reply:
+    def read(self):
+        return src.encode()
+calls = []
+def flaky(url, timeout):
+    calls.append(url)
+    if len(calls) < 3:
+        raise OSError("network down")
+    return Reply()
+G.urllib.request.urlopen, G.time.sleep = flaky, lambda s: None
+assert G.fetch_calendar() == G.parse_calendar(src) and len(calls) == 3
+def down(url, timeout):
+    raise OSError("network down")
+G.urllib.request.urlopen = down
+try:
+    G.fetch_calendar(); raise SystemExit("should have failed")
+except OSError:
+    pass
 print("OK")

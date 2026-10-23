@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generates a static page with the "Přípravka" bookings from the Hala Polárka calendar into site/ (for GitHub Pages).
 Run: python3 generate.py      Preview: python3 -m http.server -d site"""
-import datetime as dt, hashlib, html as H, os, re, shutil, unicodedata, urllib.request
+import datetime as dt, hashlib, html as H, os, re, shutil, time, unicodedata, urllib.request
 from zoneinfo import ZoneInfo
 
 PRAGUE = ZoneInfo("Europe/Prague")
@@ -17,8 +17,14 @@ def parse_calendar(src):
         raise ValueError("no days found in the calendar, did its format change?")
     return days
 
-def fetch_calendar():
-    return parse_calendar(urllib.request.urlopen(URL, timeout=15).read().decode())
+def fetch_calendar(attempts=3):
+    for n in range(attempts):
+        try:
+            return parse_calendar(urllib.request.urlopen(URL, timeout=15).read().decode())
+        except OSError:  # network blip: retry, so a short outage does not fail the run (and send an alert e-mail)
+            if n == attempts - 1:
+                raise
+            time.sleep(10)
 
 def strip_accents(text):
     return "".join(c for c in unicodedata.normalize("NFD", text.lower()) if not unicodedata.combining(c))
