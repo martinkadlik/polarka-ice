@@ -75,10 +75,10 @@ def day_card(d):
     for event, off in d["events"]:
         t = time_range(event)
         all_ok &= not off
-        rows.append(f'<li class="{"warn" if off else "ok"}"><time>{t.replace("-", "–") if t else "—"}</time>'
+        rows.append(f'<li class="{"warn" if off else "ok"}"><time>{t or "—"}</time>'
                     f'<span>{esc(title(event))}</span><i>{"⚠️" if off else "🏒"}</i></li>')
     for t in d["missing"]:
-        rows.append(f'<li class="missing"><time>{t.replace("-", "–")}</time><span>Chybí rezervace</span><i>⚠️</i></li>')
+        rows.append(f'<li class="missing"><time>{t}</time><span>Chybí rezervace</span><i>⚠️</i></li>')
     heading = re.sub(r"\s*\d{4}$", "", d["day"])
     return (f'<section class="day{" all-ok" if all_ok else ""}" data-date="{d["date"].isoformat()}">'
             f'<h2><span>{esc(heading)}</span></h2><ul>{"".join(rows)}</ul></section>')
@@ -104,14 +104,15 @@ CSS = ":root{" + LIGHT + "}@media(prefers-color-scheme:dark){:root:not([data-the
 @media(prefers-color-scheme:dark){:root:not([data-theme=light]) #theme .moon{display:none}:root:not([data-theme=light]) #theme .sun{display:block}}
 #refresh svg,#theme svg{display:block;margin:auto}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.4 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;overflow-wrap:anywhere}
+html{background:var(--bg)}
+body{margin:0;min-height:100vh;min-height:100dvh;background:var(--bg);color:var(--tx);font:15px/1.4 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;overflow-wrap:anywhere}
 body::before{content:"";position:fixed;inset:0;z-index:-1;opacity:var(--wm);background:url(logo.png) center/min(80vw,420px) no-repeat}
 header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
 .bar{max-width:640px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:8px}
 .bar img{width:48px;height:48px}.bar div{flex:1;min-width:0}
 h1{margin:0;font-size:1.2em;line-height:1.1;font-weight:700}footer{margin-top:20px;text-align:center;color:var(--mut);font-size:.8em}
 #refresh,#theme{min-width:44px;min-height:44px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--red);cursor:pointer}
-main{max-width:640px;margin:0 auto;padding:12px 16px 32px}
+main{max-width:640px;margin:0 auto;padding:12px 16px calc(32px + env(safe-area-inset-bottom))}
 .summary{margin:4px 0 12px;padding:12px 14px;border-radius:12px;font-weight:600}
 .good{background:var(--card);color:var(--ok);border:1px solid var(--ok)}.bad{background:var(--warn-bg);color:var(--warn)}
 .filter{display:flex;gap:8px;margin-bottom:12px}
@@ -159,12 +160,13 @@ def render_page(days):
     else:
         content = '<p class="error">V nejbližších dnech nejsou žádné rezervace Přípravky.</p>'
     return f"""<!doctype html><html lang=cs><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Události – Hala Polárka</title><meta name=color-scheme content="light dark">
+<title>Události - Hala Polárka</title><meta name=color-scheme content="light dark">
+<meta name=theme-color content="#f4f4f7" media="(prefers-color-scheme: light)"><meta name=theme-color content="#111114" media="(prefers-color-scheme: dark)">
 <meta name=apple-mobile-web-app-capable content=yes><meta name=mobile-web-app-capable content=yes>
 <link rel=icon href=logo.png><link rel=apple-touch-icon href=apple-touch-icon.png>
 <script>try{{if(localStorage.theme)document.documentElement.dataset.theme=localStorage.theme}}catch(e){{}}</script>
 <style>{CSS}</style>
-<header><div class=bar><img src=logo.png alt="HC Frýdek-Místek"><div><h1>Hala Polárka – Přípravka</h1></div><button id=theme aria-label="Přepnout světlý/tmavý režim">{ICON_SUN}{ICON_MOON}</button><button id=refresh aria-label="Obnovit">{ICON_REFRESH}</button></div></header>
+<header><div class=bar><img src=logo.png alt="HC Frýdek-Místek"><div><h1>Hala Polárka - Přípravka</h1></div><button id=theme aria-label="Přepnout světlý/tmavý režim">{ICON_SUN}{ICON_MOON}</button><button id=refresh aria-label="Obnovit">{ICON_REFRESH}</button></div></header>
 <main><p class="summary bad" id=stale hidden></p>{content}<div class=actions>
 <a class=btn href="{URL}" target=_blank rel=noopener>Otevřít celý kalendář ↗</a>
 <a class=btn href="calendar.ics">Přidat do kalendáře (.ics)</a></div>
