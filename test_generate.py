@@ -105,4 +105,45 @@ assert "Zobrazit vše" not in G.render_matches(up[:5]).decode()
 assert "Žádné nadcházející zápasy" in G.render_matches([]).decode()
 assert "nepodařilo načíst" in G.render_matches(None).decode()
 assert 'aria-current=page>Rezervace' in G.render_page(days).decode() and "zapasy.html" in G.render_page(days).decode()
+
+# --- NHL page (JSON from api-web.nhle.com, times in UTC)
+import json
+def team(place, name):
+    return {"placeName": {"default": place}, "commonName": {"default": name}}
+def game(utc, state="FUT"):
+    return {"startTimeUTC": utc, "gameState": state, "homeTeam": team("Boston", "Bruins"),
+            "awayTeam": team("Toronto", "Maple Leafs"), "venue": {"default": "TD Garden"}}
+now = dt.datetime(2026, 10, 23, 20, 50, tzinfo=G.PRAGUE)
+nhl_games = [
+    game("2026-10-29T22:00:00Z"),                # 23:00 on the 29th, the last day of the window
+    game("2026-10-23T18:00:00Z"),                # 20:00 today: already before "now"
+    game("2026-10-24T00:00:00Z"),                # 02:00 on the 24th (summer time)
+    game("2026-10-26T00:00:00Z"),                # 01:00 on the 26th (winter time since 25 Oct)
+    game("2026-10-24T01:00:00Z", "LIVE"),        # started
+    game("2026-10-24T02:00:00Z", "FINAL"),       # played
+    game("2026-10-25T23:30:00Z"),                # 00:30 on the 26th
+    game("2026-10-30T00:00:00Z"),                # 01:00 on the 30th: outside the 7 days
+]
+src_nhl = json.dumps({"gameWeek": [{"date": "2026-10-23", "games": nhl_games}]})
+nhl = G.parse_nhl(src_nhl, now)
+assert [(m["date"].day, m["time"]) for m in nhl] == [(24, "02:00"), (26, "00:30"), (26, "01:00"), (29, "23:00")]
+assert (nhl[0]["home"], nhl[0]["away"], nhl[0]["side"], nhl[0]["note"]) == ("Boston Bruins", "Toronto Maple Leafs", None, "TD Garden")
+for bad in ("{}", '{"gameWeek": []}'):
+    try:
+        G.parse_nhl(bad, now); raise SystemExit("should have failed")
+    except ValueError:
+        pass
+requested = []
+class NhlReply:
+    def read(self):
+        return src_nhl.encode()
+G.urllib.request.urlopen = lambda request, timeout: requested.append((request.full_url, request.get_header("User-agent"))) or NhlReply()
+assert G.fetch_nhl(now) == nhl and requested == [(G.NHL_URL, G.USER_AGENT)]   # sends our own User-Agent
+page = G.render_nhl(nhl + nhl[:2]).decode()
+assert "Zobrazit vše (6)" in page and "TD Garden" in page and "Boston Bruins" in page and 'data-date="2026-10-24"' in page
+assert "<strong>" not in page and 'class="chip' not in page      # no "our team" on this page
+assert all(f'href="{p}"' in page for p in ("index.html", "zapasy.html", "nhl.html")) and "aria-current=page>Zápasy NHL" in page
+assert "nhl.com/schedule" in page and "Poslední aktualizace" in page
+assert "nejsou žádné zápasy NHL" in G.render_nhl([]).decode() and "nepodařilo načíst" in G.render_nhl(None).decode()
+assert all('href="nhl.html"' in p for p in (G.render_page(days).decode(), G.render_matches([]).decode()))
 print("OK")

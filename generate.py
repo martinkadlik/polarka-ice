@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generates a static page with the "Přípravka" bookings from the Hala Polárka calendar into site/ (for GitHub Pages).
 Run: python3 generate.py      Preview: python3 -m http.server -d site"""
-import datetime as dt, hashlib, html as H, os, re, shutil, time, unicodedata, urllib.request
+import datetime as dt, hashlib, html as H, json, os, re, shutil, time, unicodedata, urllib.request
 from zoneinfo import ZoneInfo
 
 PRAGUE = ZoneInfo("Europe/Prague")
@@ -17,10 +17,14 @@ def parse_calendar(src):
         raise ValueError("no days found in the calendar, did its format change?")
     return days
 
+# the NHL API answers 403 to Python's default User-Agent, so we identify ourselves honestly
+USER_AGENT = "polarka-ice (+https://github.com/martinkadlik/polarka-ice)"
+
 def fetch(url, encoding, attempts=3):
     for n in range(attempts):
         try:
-            return urllib.request.urlopen(url, timeout=15).read().decode(encoding)
+            request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+            return urllib.request.urlopen(request, timeout=15).read().decode(encoding)
         except OSError:  # network blip: retry, so a short outage does not fail the run (and send an alert e-mail)
             if n == attempts - 1:
                 raise
@@ -96,7 +100,7 @@ def parse_matches(src):
         if not date:
             raise ValueError(f"unknown date format: {cells[1]!r}")
         result.append(dict(date=dt.date(int(date[3]), int(date[2]), int(date[1])), time=f"{int(start[1]):02}:{start[2]}",
-                           round=cells[0].rstrip("."), home=cells[3], away=cells[4], side=side,
+                           round=cells[0].rstrip("."), note=f'{cells[0].rstrip(".")}. kolo', home=cells[3], away=cells[4], side=side,
                            opponent=cells[4] if side == "doma" else cells[3]))
     return result
 
@@ -105,6 +109,30 @@ def fetch_matches(now):
 
 def upcoming(matches, today):
     return sorted((m for m in matches if m["date"] >= today), key=lambda m: (m["date"], m["time"]))
+
+NHL_URL = "https://api-web.nhle.com/v1/schedule/now"  # redirects to the dated URL and returns a week of games
+NHL_DAYS = 7  # the window ends 6 days after today: the last Prague day of one API week would be incomplete
+
+def parse_nhl(src, now):
+    """Upcoming NHL games of the coming days in Prague time, in the same shape as parse_matches."""
+    week = json.loads(src).get("gameWeek")
+    if not week:
+        raise ValueError("no gameWeek in the NHL schedule, did the format change?")
+    last = now.date() + dt.timedelta(days=NHL_DAYS - 1)
+    name = lambda team: f'{team["placeName"]["default"]} {team["commonName"]["default"]}'
+    result = []
+    for day in week:
+        for g in day["games"]:
+            if g["gameState"] not in ("FUT", "PRE"):  # not started yet
+                continue
+            start = dt.datetime.fromisoformat(g["startTimeUTC"].replace("Z", "+00:00")).astimezone(PRAGUE)
+            if start >= now and start.date() <= last:
+                result.append(dict(date=start.date(), time=f"{start:%H:%M}", home=name(g["homeTeam"]), away=name(g["awayTeam"]),
+                                   side=None, note=g.get("venue", {}).get("default", "")))
+    return sorted(result, key=lambda m: (m["date"], m["time"]))
+
+def fetch_nhl(now):
+    return parse_nhl(fetch(NHL_URL, "utf-8"), now)
 
 def day_card(d):
     esc = H.escape
@@ -168,8 +196,8 @@ body.only .day.all-ok,body.only li.ok{display:none}
 .actions{display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:20px}
 .btn{display:block;width:100%;max-width:360px;padding:12px;text-align:center;border:1px solid var(--red);border-radius:12px;color:var(--red);text-decoration:none;font-weight:600;background:var(--card)}
 .error{padding:14px;border-radius:12px;background:var(--bad-bg);color:var(--bad)}
-.tabs{display:flex;gap:16px;margin-bottom:12px;border-bottom:1px solid var(--line)}
-.tabs a{padding:8px 4px;color:var(--mut);text-decoration:none;font-weight:600;border-bottom:3px solid transparent;margin-bottom:-1px}
+.tabs{display:flex;gap:16px;margin-bottom:12px;border-bottom:1px solid var(--line);overflow-x:auto;overflow-y:hidden}
+.tabs a{white-space:nowrap;padding:8px 4px;color:var(--mut);text-decoration:none;font-weight:600;border-bottom:3px solid transparent}
 .tabs a[aria-current=page]{color:var(--red);border-bottom-color:var(--red)}
 li span small{display:block;color:var(--mut)}
 .chip{font-style:normal;font-size:.75em;font-weight:700;padding:2px 10px;border-radius:99px;border:1px solid var(--line)}
@@ -201,7 +229,7 @@ addEventListener('touchend',e=>{if(startY!==null&&e.changedTouches[0].clientY-st
 
 def shell(title, heading, active, content, now):
     tabs = "".join(f'<a href="{href}"{" aria-current=page" if key == active else ""}>{label}</a>'
-                   for key, href, label in (("bookings", "index.html", "Rezervace"), ("matches", "zapasy.html", "Zápasy A-tým")))
+                   for key, href, label in (("bookings", "index.html", "Rezervace"), ("matches", "zapasy.html", "Zápasy A-tým"), ("nhl", "nhl.html", "Zápasy NHL")))
     return f"""<!doctype html><html lang=cs><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>{title}</title><meta name=color-scheme content="light dark">
 <meta name=theme-color content="#f4f4f7" media="(prefers-color-scheme: light)"><meta name=theme-color content="#111114" media="(prefers-color-scheme: dark)">
@@ -237,28 +265,38 @@ def match_cards(matches):
     for date, items in by_date.items():
         rows = []
         for n, m in items:
-            teams = " - ".join(f'<span class=team>{esc(t) if t == m["opponent"] else f"<strong>{esc(t)}</strong>"}</span>' for t in (m["home"], m["away"]))
+            teams = " - ".join(f'<span class=team>{esc(t) if m["side"] is None or t == m["opponent"] else f"<strong>{esc(t)}</strong>"}</span>'
+                               for t in (m["home"], m["away"]))
+            chip = f'<em class="chip {m["side"]}">{"Doma" if m["side"] == "doma" else "Venku"}</em>' if m["side"] else ""
+            note = "<small>" + esc(m["note"]) + "</small>" if m["note"] else ""
             rows.append(f'<li class="{"later" if n >= SHOWN_MATCHES else ""}"><time>{m["time"]}</time>'
-                        f'<span>{teams}<small>{esc(m["round"])}. kolo</small></span>'
-                        f'<em class="chip {m["side"]}">{"Doma" if m["side"] == "doma" else "Venku"}</em></li>')
+                        f'<span>{teams}{note}</span>{chip}</li>')
         heading = f"{WEEKDAYS[date.weekday()]} {date.day}. {date.month}."
         cards.append(f'<section class="day{" later" if items[0][0] >= SHOWN_MATCHES else ""}" data-date="{date.isoformat()}">'
                      f'<h2><span>{heading}</span></h2><ul>{"".join(rows)}</ul></section>')
     return "".join(cards)
 
-def render_matches(matches):
-    """matches: the upcoming matches, or None when the club site could not be read."""
+def render_match_page(active, title, heading, matches, source_url, source_label, empty_text):
+    """matches: the upcoming matches, or None when their source could not be read."""
     now = dt.datetime.now(PRAGUE)
     if matches is None:
         content = '<p class="error">Zápasy se teď nepodařilo načíst, zkuste to později.</p>'
     elif not matches:
-        content = '<p class="error">Žádné nadcházející zápasy.</p>'
+        content = f'<p class="error">{empty_text}</p>'
     else:
         content = match_cards(matches)
         if len(matches) > SHOWN_MATCHES:
             content += f'<div class=actions><button id=more class=btn>Zobrazit vše ({len(matches)})</button></div>'
-    content += f'<div class=actions><a class=btn href="{matches_url(now)}" target=_blank rel=noopener>Celý rozpis zápasů ↗</a></div>'
-    return shell("Zápasy - HC Frýdek-Místek", "HC Frýdek-Místek - zápasy", "matches", content, now)
+    content += f'<div class=actions><a class=btn href="{source_url}" target=_blank rel=noopener>{source_label} ↗</a></div>'
+    return shell(title, heading, active, content, now)
+
+def render_matches(matches):
+    return render_match_page("matches", "Zápasy - HC Frýdek-Místek", "HC Frýdek-Místek - zápasy", matches,
+                             matches_url(dt.datetime.now(PRAGUE)), "Celý rozpis zápasů", "Žádné nadcházející zápasy.")
+
+def render_nhl(matches):
+    return render_match_page("nhl", "Zápasy NHL", "NHL - zápasy", matches, "https://www.nhl.com/schedule",
+                             "Celý rozpis NHL", "V nejbližších dnech nejsou žádné zápasy NHL.")
 
 def build_ics(days):
     esc = lambda t: re.sub(r"([\\,;])", r"\\\1", t)
@@ -284,14 +322,18 @@ def build_ics(days):
 def main():
     now = dt.datetime.now(PRAGUE)
     days = select_days(fetch_calendar())  # raises if the calendar is unavailable, so an error page is never deployed
-    try:
-        matches = upcoming(fetch_matches(now), now.date())
-    except (OSError, ValueError) as e:  # a problem on the club site must not block the bookings page
-        print(f"::warning::matches not updated: {e}")
-        matches = None
+    def optional(label, load):  # a problem on a matches source must not block the bookings page
+        try:
+            return load()
+        except (OSError, ValueError, KeyError) as e:
+            print(f"::warning::{label} not updated: {e}")
+            return None
+    matches = optional("matches", lambda: upcoming(fetch_matches(now), now.date()))
+    nhl = optional("NHL games", lambda: fetch_nhl(now))
     os.makedirs("site", exist_ok=True)
     open("site/index.html", "wb").write(render_page(days))
     open("site/zapasy.html", "wb").write(render_matches(matches))
+    open("site/nhl.html", "wb").write(render_nhl(nhl))
     open("site/calendar.ics", "wb").write(build_ics(days))
     for f in ("logo.png", "apple-touch-icon.png"):
         shutil.copy(f, "site")
