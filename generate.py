@@ -17,14 +17,17 @@ def parse_calendar(src):
         raise ValueError("no days found in the calendar, did its format change?")
     return days
 
-def fetch_calendar(attempts=3):
+def fetch(url, encoding, attempts=3):
     for n in range(attempts):
         try:
-            return parse_calendar(urllib.request.urlopen(URL, timeout=15).read().decode())
+            return urllib.request.urlopen(url, timeout=15).read().decode(encoding)
         except OSError:  # network blip: retry, so a short outage does not fail the run (and send an alert e-mail)
             if n == attempts - 1:
                 raise
             time.sleep(10)
+
+def fetch_calendar():
+    return parse_calendar(fetch(URL, "utf-8"))
 
 def strip_accents(text):
     return "".join(c for c in unicodedata.normalize("NFD", text.lower()) if not unicodedata.combining(c))
@@ -68,6 +71,40 @@ def select_days(days):
             result.append(dict(day=day, date=dt.date(int(m[3]), int(m[2]), int(m[1])), missing=absent,
                                events=[(e, off_schedule(day, e)) for e in events]))
     return result
+
+MATCHES_URL = "https://hokej.hcf-m.cz/zapasy.asp?sezona={}"
+START_TIME = re.compile(r"^(\d{1,2}):(\d{2})$")
+WEEKDAYS = ["Pondělí", "Úterý", "Středa", "Čtvrtek", "Pátek", "Sobota", "Neděle"]
+
+def matches_url(now):
+    # shortcut: the season is chosen by month (a new one from July), so the club site must have it by then
+    return MATCHES_URL.format(now.year + (now.month >= 7))
+
+def clean_cell(cell):
+    return " ".join(H.unescape(re.sub(r"<[^>]+>", " ", cell)).replace("\xa0", " ").split())
+
+def parse_matches(src):
+    """Upcoming matches from the club table: they end with a start time instead of a result."""
+    if not re.search(r"<th>\s*kolo\s*</th>", src):
+        raise ValueError("matches table not found, did the page format change?")
+    result = []
+    for side, row in re.findall(r'<tr[^>]*class="(doma|venku)"[^>]*>(.*?)</tr>', src, re.S):
+        cells = [clean_cell(c) for c in re.findall(r"<td[^>]*>(.*?)</td>", row, re.S)]
+        if len(cells) < 6 or not START_TIME.match(cells[-1]):
+            continue  # a played match (it ends with a result)
+        date, start = DATE.search(cells[1]), START_TIME.match(cells[-1])
+        if not date:
+            raise ValueError(f"unknown date format: {cells[1]!r}")
+        result.append(dict(date=dt.date(int(date[3]), int(date[2]), int(date[1])), time=f"{int(start[1]):02}:{start[2]}",
+                           round=cells[0].rstrip("."), home=cells[3], away=cells[4], side=side,
+                           opponent=cells[4] if side == "doma" else cells[3]))
+    return result
+
+def fetch_matches(now):
+    return parse_matches(fetch(matches_url(now), "cp1250"))
+
+def upcoming(matches, today):
+    return sorted((m for m in matches if m["date"] >= today), key=lambda m: (m["date"], m["time"]))
 
 def day_card(d):
     esc = H.escape
@@ -124,13 +161,21 @@ h2{display:flex;justify-content:space-between;align-items:center;margin:0;paddin
 h2 b{font-size:.7em;background:var(--red);color:#fff;border-radius:99px;padding:1px 10px;letter-spacing:.03em;text-transform:uppercase}
 ul{list-style:none;margin:0;padding:0}
 li{display:flex;align-items:center;gap:12px;padding:8px 14px;min-height:44px}li+li{border-top:1px solid var(--line)}
-li time{font-size:1.05em;font-weight:700;min-width:6em;font-variant-numeric:tabular-nums}li span{flex:1}li i{font-style:normal;color:var(--ok)}
+li time{font-size:1.05em;font-weight:700;min-width:6em;font-variant-numeric:tabular-nums}li>span{flex:1}.team{white-space:nowrap}li i{font-style:normal;color:var(--ok)}
 li.warn{background:var(--warn-bg)}li.warn time{color:var(--warn)}
 li.missing{background:var(--bad-bg);color:var(--bad)}li.missing time{color:var(--bad)}li.missing span{font-weight:600}
 body.only .day.all-ok,body.only li.ok{display:none}
 .actions{display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:20px}
 .btn{display:block;width:100%;max-width:360px;padding:12px;text-align:center;border:1px solid var(--red);border-radius:12px;color:var(--red);text-decoration:none;font-weight:600;background:var(--card)}
 .error{padding:14px;border-radius:12px;background:var(--bad-bg);color:var(--bad)}
+.tabs{display:flex;gap:16px;margin-bottom:12px;border-bottom:1px solid var(--line)}
+.tabs a{padding:8px 4px;color:var(--mut);text-decoration:none;font-weight:600;border-bottom:3px solid transparent;margin-bottom:-1px}
+.tabs a[aria-current=page]{color:var(--red);border-bottom-color:var(--red)}
+li span small{display:block;color:var(--mut)}
+.chip{font-style:normal;font-size:.75em;font-weight:700;padding:2px 10px;border-radius:99px;border:1px solid var(--line)}
+.chip.doma{background:var(--red);border-color:var(--red);color:#fff}
+.btn{font:inherit;font-weight:600;cursor:pointer}
+body:not(.all-matches) .later{display:none}
 """
 
 JS = """
@@ -147,10 +192,27 @@ if(h>3){const s=document.getElementById('stale');s.textContent='⚠️ Údaje ne
 const today=new Date().toLocaleDateString('sv',{timeZone:'Europe/Prague'});  // YYYY-MM-DD
 document.querySelectorAll('.day').forEach(d=>{const diff=Math.round((new Date(d.dataset.date)-new Date(today))/864e5);
 if(diff==0)d.classList.add('today');const label={0:'Dnes',1:'Zítra'}[diff];if(label)d.querySelector('h2').insertAdjacentHTML('beforeend','<b>'+label+'</b>')});
+const more=document.getElementById('more');
+if(more)more.onclick=()=>{body.classList.add('all-matches');more.parentElement.remove()};
 let startY=null;  // pull down at the top of the page = reload (a home-screen shortcut has no address bar)
 addEventListener('touchstart',e=>{startY=scrollY==0?e.touches[0].clientY:null},{passive:true});
 addEventListener('touchend',e=>{if(startY!==null&&e.changedTouches[0].clientY-startY>90)location.reload()});
 """
+
+def shell(title, heading, active, content, now):
+    tabs = "".join(f'<a href="{href}"{" aria-current=page" if key == active else ""}>{label}</a>'
+                   for key, href, label in (("bookings", "index.html", "Rezervace"), ("matches", "zapasy.html", "Zápasy A-tým")))
+    return f"""<!doctype html><html lang=cs><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>{title}</title><meta name=color-scheme content="light dark">
+<meta name=theme-color content="#f4f4f7" media="(prefers-color-scheme: light)"><meta name=theme-color content="#111114" media="(prefers-color-scheme: dark)">
+<meta name=apple-mobile-web-app-capable content=yes><meta name=mobile-web-app-capable content=yes>
+<link rel=icon href=logo.png><link rel=apple-touch-icon href=apple-touch-icon.png>
+<script>try{{if(localStorage.theme)document.documentElement.dataset.theme=localStorage.theme}}catch(e){{}}</script>
+<style>{CSS}</style>
+<header><div class=bar><img src=logo.png alt="HC Frýdek-Místek"><div><h1>{heading}</h1></div><button id=theme aria-label="Přepnout světlý/tmavý režim">{ICON_SUN}{ICON_MOON}</button><button id=refresh aria-label="Obnovit">{ICON_REFRESH}</button></div></header>
+<main><nav class=tabs>{tabs}</nav><p class="summary bad" id=stale hidden></p>{content}
+<footer>Poslední aktualizace: <time datetime="{now.isoformat(timespec="seconds")}">{now.day}. {now.month}. {now.year} {now:%H:%M}</time></footer></main>
+<script>{JS}</script>""".encode()
 
 def render_page(days):
     now = dt.datetime.now(PRAGUE)
@@ -159,19 +221,44 @@ def render_page(days):
                    + "".join(day_card(d) for d in days))
     else:
         content = '<p class="error">V nejbližších dnech nejsou žádné rezervace Přípravky.</p>'
-    return f"""<!doctype html><html lang=cs><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Události - Hala Polárka</title><meta name=color-scheme content="light dark">
-<meta name=theme-color content="#f4f4f7" media="(prefers-color-scheme: light)"><meta name=theme-color content="#111114" media="(prefers-color-scheme: dark)">
-<meta name=apple-mobile-web-app-capable content=yes><meta name=mobile-web-app-capable content=yes>
-<link rel=icon href=logo.png><link rel=apple-touch-icon href=apple-touch-icon.png>
-<script>try{{if(localStorage.theme)document.documentElement.dataset.theme=localStorage.theme}}catch(e){{}}</script>
-<style>{CSS}</style>
-<header><div class=bar><img src=logo.png alt="HC Frýdek-Místek"><div><h1>Hala Polárka - Přípravka</h1></div><button id=theme aria-label="Přepnout světlý/tmavý režim">{ICON_SUN}{ICON_MOON}</button><button id=refresh aria-label="Obnovit">{ICON_REFRESH}</button></div></header>
-<main><p class="summary bad" id=stale hidden></p>{content}<div class=actions>
+    content += f"""<div class=actions>
 <a class=btn href="{URL}" target=_blank rel=noopener>Otevřít celý kalendář ↗</a>
-<a class=btn href="calendar.ics">Přidat do kalendáře (.ics)</a></div>
-<footer>Poslední aktualizace: <time datetime="{now.isoformat(timespec="seconds")}">{now.day}. {now.month}. {now.year} {now:%H:%M}</time></footer></main>
-<script>{JS}</script>""".encode()
+<a class=btn href="calendar.ics">Přidat do kalendáře (.ics)</a></div>"""
+    return shell("Události - Hala Polárka", "Hala Polárka - Přípravka", "bookings", content, now)
+
+SHOWN_MATCHES = 5  # the rest is hidden behind "Zobrazit vše"
+
+def match_cards(matches):
+    esc = H.escape
+    by_date = {}
+    for n, m in enumerate(matches):
+        by_date.setdefault(m["date"], []).append((n, m))
+    cards = []
+    for date, items in by_date.items():
+        rows = []
+        for n, m in items:
+            teams = " - ".join(f'<span class=team>{esc(t) if t == m["opponent"] else f"<strong>{esc(t)}</strong>"}</span>' for t in (m["home"], m["away"]))
+            rows.append(f'<li class="{"later" if n >= SHOWN_MATCHES else ""}"><time>{m["time"]}</time>'
+                        f'<span>{teams}<small>{esc(m["round"])}. kolo</small></span>'
+                        f'<em class="chip {m["side"]}">{"Doma" if m["side"] == "doma" else "Venku"}</em></li>')
+        heading = f"{WEEKDAYS[date.weekday()]} {date.day}. {date.month}."
+        cards.append(f'<section class="day{" later" if items[0][0] >= SHOWN_MATCHES else ""}" data-date="{date.isoformat()}">'
+                     f'<h2><span>{heading}</span></h2><ul>{"".join(rows)}</ul></section>')
+    return "".join(cards)
+
+def render_matches(matches):
+    """matches: the upcoming matches, or None when the club site could not be read."""
+    now = dt.datetime.now(PRAGUE)
+    if matches is None:
+        content = '<p class="error">Zápasy se teď nepodařilo načíst, zkuste to později.</p>'
+    elif not matches:
+        content = '<p class="error">Žádné nadcházející zápasy.</p>'
+    else:
+        content = match_cards(matches)
+        if len(matches) > SHOWN_MATCHES:
+            content += f'<div class=actions><button id=more class=btn>Zobrazit vše ({len(matches)})</button></div>'
+    content += f'<div class=actions><a class=btn href="{matches_url(now)}" target=_blank rel=noopener>Celý rozpis zápasů ↗</a></div>'
+    return shell("Zápasy - HC Frýdek-Místek", "HC Frýdek-Místek - zápasy", "matches", content, now)
 
 def build_ics(days):
     esc = lambda t: re.sub(r"([\\,;])", r"\\\1", t)
@@ -195,9 +282,16 @@ def build_ics(days):
     return ("\r\n".join(lines + ["END:VCALENDAR"]) + "\r\n").encode()
 
 def main():
+    now = dt.datetime.now(PRAGUE)
     days = select_days(fetch_calendar())  # raises if the calendar is unavailable, so an error page is never deployed
+    try:
+        matches = upcoming(fetch_matches(now), now.date())
+    except (OSError, ValueError) as e:  # a problem on the club site must not block the bookings page
+        print(f"::warning::matches not updated: {e}")
+        matches = None
     os.makedirs("site", exist_ok=True)
     open("site/index.html", "wb").write(render_page(days))
+    open("site/zapasy.html", "wb").write(render_matches(matches))
     open("site/calendar.ics", "wb").write(build_ics(days))
     for f in ("logo.png", "apple-touch-icon.png"):
         shutil.copy(f, "site")
