@@ -1,7 +1,7 @@
 name: Publish site
 on:
   schedule:
-    - cron: "*/15 * * * *"  # every 15 minutes; GitHub may delay scheduled runs
+    - cron: "4,19,34,49 * * * *"  # every 15 minutes, off the busy :00/:30 marks; GitHub still often delays or skips scheduled runs
   push:
     branches: [main]
   workflow_dispatch:

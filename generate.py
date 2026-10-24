@@ -230,7 +230,7 @@ const themeBtn=document.getElementById('theme'),root=document.documentElement;
 const isDark=()=>root.dataset.theme?root.dataset.theme=='dark':matchMedia('(prefers-color-scheme:dark)').matches;
 themeBtn.onclick=()=>{root.dataset.theme=isDark()?'light':'dark';try{localStorage.theme=root.dataset.theme}catch(e){}};
 const checkStale=()=>{const h=(Date.now()-new Date(document.querySelector('footer time').dateTime))/36e5;
-if(h>3){const s=document.getElementById('stale');s.textContent='⚠️ Údaje nemusí být aktuální, poslední aktualizace před '+Math.floor(h)+' h.';s.hidden=false}};checkStale();
+if(h>6){const s=document.getElementById('stale');s.textContent='⚠️ Údaje nemusí být aktuální, poslední aktualizace před '+Math.floor(h)+' h.';s.hidden=false}};checkStale();
 // the page can be up to an hour old, so "today"/"tomorrow" is worked out here, not at build time
 const today=new Date().toLocaleDateString('sv',{timeZone:'Europe/Prague'});  // YYYY-MM-DD
 document.querySelectorAll('.day').forEach(d=>{const diff=Math.round((new Date(d.dataset.date)-new Date(today))/864e5);
