@@ -159,7 +159,10 @@ assert 'src="logos/nhl/BOS_light.svg"' in page and 'src="logos/nhl/BOS_dark.svg"
 assert page.count('<img class="logo ') == 16          # 4 games x 2 teams x (light + dark)
 assert "Boston Bruins" in page and "Toronto Maple Leafs" in page and 'class="logos"' in page
 assert G.logo_html("XXX") == "" and G.logo_html("") == "" and G.logo_html("../x") == ""     # unknown team or odd value: no logo
-assert '<img class="logo ' not in G.render_nhl([dict(nhl[0], home_abbr="XXX", away_abbr="")]).decode()   # no crash, no broken image
+import contextlib, io
+with contextlib.redirect_stdout(io.StringIO()) as printed:     # the warning is expected here: keep it out of the Actions log
+    unknown_page = G.render_nhl([dict(nhl[0], home_abbr="XXX", away_abbr="")]).decode()
+assert '<img class="logo ' not in unknown_page and "no logo for XXX" in printed.getvalue()   # no crash, no broken image, one warning
 assert '<img class="logo ' not in G.render_matches(up).decode() + G.render_page(days).decode()           # only the NHL page has logos
 files = sorted(glob.glob("logos/nhl/*.svg"))
 assert len(files) >= 64, len(files)
