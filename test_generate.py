@@ -171,4 +171,11 @@ for path in files:
     assert svg.lstrip().startswith("<svg") and not re.search(r'<script|<foreignObject|\son\w+\s*=|href\s*=\s*["\']?https?:', svg, re.I), path
     other = path.replace("_light.svg", "_dark.svg") if path.endswith("_light.svg") else path.replace("_dark.svg", "_light.svg")
     assert os.path.exists(other), other                # both colour variants exist for every team
+
+# --- page script: the time-dependent parts and their settings
+html = G.render_page(days).decode()
+assert f"s.hidden=!(h>{G.STALE_HOURS})" in html and G.STALE_HOURS == 3   # stale banner threshold
+assert "__" not in G.JS and f"i>={G.SHOWN_MATCHES}" in G.JS                                                     # every placeholder replaced
+assert "visibilitychange" in G.JS and "pageshow" in G.JS and "update();" in G.JS                                  # re-checked when resumed
+assert "display-mode: standalone" in G.JS                                                                         # pull to refresh only in the app
 print("OK")

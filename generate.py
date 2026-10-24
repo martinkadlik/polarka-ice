@@ -222,6 +222,7 @@ li.logos>span{display:flex;flex-direction:column;gap:6px}.logos .team{display:fl
 """
 
 SHOWN_MATCHES = 5  # the rest is hidden behind "Zobrazit vše"
+STALE_HOURS = 3  # the page warns when its data is older than this
 
 JS = """
 const body=document.body,buttons=[...document.querySelectorAll('[data-filter]')];
@@ -231,9 +232,10 @@ document.getElementById('refresh').onclick=()=>location.reload();
 const themeBtn=document.getElementById('theme'),root=document.documentElement;
 const isDark=()=>root.dataset.theme?root.dataset.theme=='dark':matchMedia('(prefers-color-scheme:dark)').matches;
 themeBtn.onclick=()=>{root.dataset.theme=isDark()?'light':'dark';try{localStorage.theme=root.dataset.theme}catch(e){}};
-const checkStale=()=>{const h=(Date.now()-new Date(document.querySelector('footer time').dateTime))/36e5;
-if(h>3){const s=document.getElementById('stale');s.textContent='⚠️ Údaje nemusí být aktuální, poslední aktualizace před '+Math.floor(h)+' h.';s.hidden=false}};checkStale();
-// the page can be hours old (GitHub runs the update rarely), so what depends on "now" is worked out here, not at build time:
+// the page can be hours old (GitHub runs the update rarely), so what depends on "now" is worked out here, not at build time,
+// and again when the page comes back on screen (a home-screen app or a background tab is resumed, not reloaded)
+const checkStale=()=>{const h=(Date.now()-new Date(document.querySelector('footer time').dateTime))/36e5,s=document.getElementById('stale');
+s.hidden=!(h>__STALE__);if(!s.hidden)s.textContent='⚠️ Údaje nemusí být aktuální, poslední aktualizace před '+Math.floor(h)+' h.'};
 // games that have started are dropped, then the first __SHOWN__ are shown again and "Zobrazit vše" is recounted
 const prune=()=>{if(!document.querySelector('li[data-start]'))return;
 document.querySelectorAll('li[data-start]').forEach(r=>{if(new Date(r.dataset.start)<=Date.now())r.remove()});
@@ -241,18 +243,24 @@ document.querySelectorAll('.day').forEach(d=>{if(!d.querySelector('li'))d.remove
 const rows=[...document.querySelectorAll('.day li')];rows.forEach((r,i)=>r.classList.toggle('later',i>=__SHOWN__));
 document.querySelectorAll('.day').forEach(d=>d.classList.toggle('later',!d.querySelector('li:not(.later)')));
 const btn=document.getElementById('more');if(btn){btn.textContent='Zobrazit vše ('+rows.length+')';if(rows.length<=__SHOWN__)btn.parentElement.remove()}
-if(!rows.length)document.querySelector('.actions').insertAdjacentHTML('beforebegin','<p class="error">Žádné nadcházející zápasy.</p>')};prune();
-const today=new Date().toLocaleDateString('sv',{timeZone:'Europe/Prague'});  // YYYY-MM-DD
-document.querySelectorAll('.day').forEach(d=>{const diff=Math.round((new Date(d.dataset.date)-new Date(today))/864e5);
-if(diff==0)d.classList.add('today');const label={0:'Dnes',1:'Zítra'}[diff];if(label)d.querySelector('h2').insertAdjacentHTML('beforeend','<b>'+label+'</b>')});
+if(!rows.length&&!document.getElementById('none'))document.querySelector('.actions').insertAdjacentHTML('beforebegin','<p class="error" id=none>Žádné nadcházející zápasy.</p>')};
+const label=()=>{const today=new Date().toLocaleDateString('sv',{timeZone:'Europe/Prague'});  // YYYY-MM-DD
+document.querySelectorAll('.day').forEach(d=>{const diff=Math.round((new Date(d.dataset.date)-new Date(today))/864e5),h2=d.querySelector('h2');
+d.classList.toggle('today',diff==0);h2.querySelector('b')?.remove();const l={0:'Dnes',1:'Zítra'}[diff];if(l)h2.insertAdjacentHTML('beforeend','<b>'+l+'</b>')})};
+const update=()=>{checkStale();prune();label()};update();
+const loadedAt=Date.now();  // back on screen after 15+ minutes: load the newest version, otherwise just redo the checks
+const resume=()=>{if(Date.now()-loadedAt>9e5)location.reload();else update()};
+addEventListener('pageshow',e=>{if(e.persisted)resume()});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState=='visible')resume()});
 const more=document.getElementById('more');
 if(more)more.onclick=()=>{body.classList.add('all-matches');more.parentElement.remove()};
-let startY=null;  // pull down at the top of the page = reload (a home-screen shortcut has no address bar)
+// pull down at the top = reload, only in the home-screen app: it has no address bar, while browsers have their own gesture
+if(matchMedia('(display-mode: standalone)').matches||navigator.standalone){let startY=null;
 addEventListener('touchstart',e=>{startY=scrollY==0?e.touches[0].clientY:null},{passive:true});
-addEventListener('touchend',e=>{if(startY!==null&&e.changedTouches[0].clientY-startY>90)location.reload()});
+addEventListener('touchend',e=>{if(startY!==null&&e.changedTouches[0].clientY-startY>90)location.reload()})}
 """
 
-JS = JS.replace("__SHOWN__", str(SHOWN_MATCHES))
+JS = JS.replace("__SHOWN__", str(SHOWN_MATCHES)).replace("__STALE__", str(STALE_HOURS))
 
 def shell(title, heading, active, content, now):
     tabs = "".join(f'<a href="{href}"{" aria-current=page" if key == active else ""}>{label}</a>'
