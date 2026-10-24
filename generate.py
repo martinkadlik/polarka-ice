@@ -127,7 +127,7 @@ def parse_nhl(src, now):
                 continue
             start = dt.datetime.fromisoformat(g["startTimeUTC"].replace("Z", "+00:00")).astimezone(PRAGUE)
             if start >= now and start.date() <= last:
-                result.append(dict(date=start.date(), time=f"{start:%H:%M}", home=name(g["homeTeam"]), away=name(g["awayTeam"]),
+                result.append(dict(date=start.date(), time=f"{start:%H:%M}", start=start.isoformat(timespec="seconds"), home=name(g["homeTeam"]), away=name(g["awayTeam"]),
                                    home_abbr=g["homeTeam"].get("abbrev", ""), away_abbr=g["awayTeam"].get("abbrev", ""),
                                    side=None, note=""))
     return sorted(result, key=lambda m: (m["date"], m["time"]))
@@ -221,6 +221,8 @@ body:not(.all-matches) .later{display:none}
 li.logos>span{display:flex;flex-direction:column;gap:6px}.logos .team{display:flex;align-items:center;gap:10px;white-space:normal}
 """
 
+SHOWN_MATCHES = 5  # the rest is hidden behind "Zobrazit vše"
+
 JS = """
 const body=document.body,buttons=[...document.querySelectorAll('[data-filter]')];
 const setFilter=only=>{body.classList.toggle('only',only);buttons.forEach(b=>b.setAttribute('aria-pressed',(b.dataset.filter=='only')==only));history.replaceState(null,'',only?'#only':location.pathname+location.search)};
@@ -231,7 +233,15 @@ const isDark=()=>root.dataset.theme?root.dataset.theme=='dark':matchMedia('(pref
 themeBtn.onclick=()=>{root.dataset.theme=isDark()?'light':'dark';try{localStorage.theme=root.dataset.theme}catch(e){}};
 const checkStale=()=>{const h=(Date.now()-new Date(document.querySelector('footer time').dateTime))/36e5;
 if(h>6){const s=document.getElementById('stale');s.textContent='⚠️ Údaje nemusí být aktuální, poslední aktualizace před '+Math.floor(h)+' h.';s.hidden=false}};checkStale();
-// the page can be up to an hour old, so "today"/"tomorrow" is worked out here, not at build time
+// the page can be hours old (GitHub runs the update rarely), so what depends on "now" is worked out here, not at build time:
+// games that have started are dropped, then the first __SHOWN__ are shown again and "Zobrazit vše" is recounted
+const prune=()=>{if(!document.querySelector('li[data-start]'))return;
+document.querySelectorAll('li[data-start]').forEach(r=>{if(new Date(r.dataset.start)<=Date.now())r.remove()});
+document.querySelectorAll('.day').forEach(d=>{if(!d.querySelector('li'))d.remove()});
+const rows=[...document.querySelectorAll('.day li')];rows.forEach((r,i)=>r.classList.toggle('later',i>=__SHOWN__));
+document.querySelectorAll('.day').forEach(d=>d.classList.toggle('later',!d.querySelector('li:not(.later)')));
+const btn=document.getElementById('more');if(btn){btn.textContent='Zobrazit vše ('+rows.length+')';if(rows.length<=__SHOWN__)btn.parentElement.remove()}
+if(!rows.length)document.querySelector('.actions').insertAdjacentHTML('beforebegin','<p class="error">Žádné nadcházející zápasy.</p>')};prune();
 const today=new Date().toLocaleDateString('sv',{timeZone:'Europe/Prague'});  // YYYY-MM-DD
 document.querySelectorAll('.day').forEach(d=>{const diff=Math.round((new Date(d.dataset.date)-new Date(today))/864e5);
 if(diff==0)d.classList.add('today');const label={0:'Dnes',1:'Zítra'}[diff];if(label)d.querySelector('h2').insertAdjacentHTML('beforeend','<b>'+label+'</b>')});
@@ -241,6 +251,8 @@ let startY=null;  // pull down at the top of the page = reload (a home-screen sh
 addEventListener('touchstart',e=>{startY=scrollY==0?e.touches[0].clientY:null},{passive:true});
 addEventListener('touchend',e=>{if(startY!==null&&e.changedTouches[0].clientY-startY>90)location.reload()});
 """
+
+JS = JS.replace("__SHOWN__", str(SHOWN_MATCHES))
 
 def shell(title, heading, active, content, now):
     tabs = "".join(f'<a href="{href}"{" aria-current=page" if key == active else ""}>{label}</a>'
@@ -269,8 +281,6 @@ def render_page(days):
 <a class=btn href="calendar.ics">Přidat do kalendáře (.ics)</a></div>"""
     return shell("Události - Hala Polárka", "Hala Polárka - Přípravka", "bookings", content, now)
 
-SHOWN_MATCHES = 5  # the rest is hidden behind "Zobrazit vše"
-
 def match_cards(matches):
     esc = H.escape
     by_date = {}
@@ -289,7 +299,8 @@ def match_cards(matches):
             chip = f'<em class="chip {m["side"]}">{"Doma" if m["side"] == "doma" else "Venku"}</em>' if m["side"] else ""
             note = "<small>" + esc(m["note"]) + "</small>" if m["note"] else ""
             classes = " ".join(c for c, on in (("later", n >= SHOWN_MATCHES), ("logos", has_logos)) if on)
-            rows.append(f'<li class="{classes}"><time>{m["time"]}</time>'
+            start = f' data-start="{m["start"]}"' if "start" in m else ""
+            rows.append(f'<li class="{classes}"{start}><time>{m["time"]}</time>'
                         f'<span>{teams}{note}</span>{chip}</li>')
         heading = f"{WEEKDAYS[date.weekday()]} {date.day}. {date.month}."
         cards.append(f'<section class="day{" later" if items[0][0] >= SHOWN_MATCHES else ""}" data-date="{date.isoformat()}">'

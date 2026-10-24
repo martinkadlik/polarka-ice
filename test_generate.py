@@ -101,7 +101,7 @@ assert page.count('class="later"') == 1 and "Zobrazit vše (6)" in page      # 5
 assert 'data-date="2026-10-25"' in page and "Neděle 25. 10." in page and "<strong>Frýdek-Místek</strong>" in page and "<strong>Třebíč</strong>" not in page and "Třebíč" in page
 assert "Doma" in page and "Venku" in page and 'href="index.html"' in page and 'aria-current=page>Zápasy' in page
 assert "sezona=2027" in page and "Poslední aktualizace" in page
-assert "Zobrazit vše" not in G.render_matches(up[:5]).decode()
+assert "id=more" not in G.render_matches(up[:5]).decode()          # up to 5 matches: no "Zobrazit vše" button
 assert "Žádné nadcházející zápasy" in G.render_matches([]).decode()
 assert "nepodařilo načíst" in G.render_matches(None).decode()
 assert 'aria-current=page>Rezervace' in G.render_page(days).decode() and "zapasy.html" in G.render_page(days).decode()
@@ -142,6 +142,9 @@ assert G.fetch_nhl(now) == nhl and requested == [(G.NHL_URL, G.USER_AGENT)]   # 
 page = G.render_nhl(nhl + nhl[:2]).decode()
 assert "Zobrazit vše (6)" in page and "TD Garden" not in page and "<small>" not in page    # the venue is not shown
 assert "Boston Bruins" in page and 'data-date="2026-10-24"' in page
+assert 'data-start="2026-10-24T02:00:00+02:00"' in page and page.count("data-start=") == 6        # NHL rows carry their start (Prague offset)
+assert "data-start=" not in G.render_matches(up).decode() + G.render_page(days).decode()           # the other pages are not pruned
+assert "const prune=" in page and "i>=5" in page and "li[data-start]" in page
 assert "<strong>" not in page and 'class="chip' not in page      # no "our team" on this page
 assert all(f'href="{p}"' in page for p in ("index.html", "zapasy.html", "nhl.html")) and "aria-current=page>Zápasy NHL" in page
 assert "nhl.com/schedule" in page and "Poslední aktualizace" in page
