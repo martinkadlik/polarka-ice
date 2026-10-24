@@ -232,7 +232,7 @@ const themeBtn=document.getElementById('theme'),root=document.documentElement;
 const isDark=()=>root.dataset.theme?root.dataset.theme=='dark':matchMedia('(prefers-color-scheme:dark)').matches;
 themeBtn.onclick=()=>{root.dataset.theme=isDark()?'light':'dark';try{localStorage.theme=root.dataset.theme}catch(e){}};
 const checkStale=()=>{const h=(Date.now()-new Date(document.querySelector('footer time').dateTime))/36e5;
-if(h>6){const s=document.getElementById('stale');s.textContent='⚠️ Údaje nemusí být aktuální, poslední aktualizace před '+Math.floor(h)+' h.';s.hidden=false}};checkStale();
+if(h>3){const s=document.getElementById('stale');s.textContent='⚠️ Údaje nemusí být aktuální, poslední aktualizace před '+Math.floor(h)+' h.';s.hidden=false}};checkStale();
 // the page can be hours old (GitHub runs the update rarely), so what depends on "now" is worked out here, not at build time:
 // games that have started are dropped, then the first __SHOWN__ are shown again and "Zobrazit vše" is recounted
 const prune=()=>{if(!document.querySelector('li[data-start]'))return;

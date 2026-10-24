@@ -14,7 +14,7 @@ The page text is in Czech; the code is in English.
 expected times and writes `site/index.html` and `site/calendar.ics`. It also reads the club's matches table (which is in
 windows-1250) and the NHL schedule and writes `site/zapasy.html` and `site/nhl.html`; if one of those sources is down, its page
 shows a notice and the bookings are still updated. A GitHub Actions workflow
-(`.github/workflows/pages.yml`) runs it every 15 minutes (in practice GitHub often runs scheduled jobs only every few hours; the page warns after 6 hours
+(`.github/workflows/pages.yml`) runs it every 15 minutes (in practice GitHub often runs scheduled jobs only every few hours; the page warns after 3 hours
 without an update, and the workflow can be started by hand with "Run workflow") and publishes `site/` with GitHub Pages.
 If the calendar cannot be fetched or its format changes, the run fails and the last good page stays online.
 
